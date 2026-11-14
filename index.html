@@ -1,6 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+ <link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>MedAI</title>
@@ -499,6 +502,13 @@ setInterval(()=>{const o=S.orders.at(-1),el=$('#steps');if(o&&el&&location.hash=
 addEventListener('hashchange',route);$('#v').classList.add('first');setTimeout(()=>$('#v').classList.remove('first'),1300);route();
 </script>
 <script>if('serviceWorker' in navigator&&location.protocol!=='file:'){addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}))}</script>
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("service-worker.js");
+  });
+}
+</script>
 </body>
 </html>
 
