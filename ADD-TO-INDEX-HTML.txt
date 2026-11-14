@@ -1,0 +1,19 @@
+1) index.html ke <head> ke andar ye lines paste karein:
+
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="theme-color" content="#0A0F1C">
+
+2) </body> se pehle ye script paste karein:
+
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("service-worker.js");
+  });
+}
+</script>
+
+3) Is zip ki saari files (manifest.json, service-worker.js, icons/, screenshots/)
+   apne repo ke medai-app wale folder mein, index.html ke saath, upload karein.
