@@ -1,9 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
- <link rel="manifest" href="manifest.json">
-<link rel="icon" type="image/png" href="icon-192.png">
-<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>MedAI</title>
@@ -226,6 +223,16 @@ const TF=[[/\b(od|once daily|qd)\b/,['09:00']],[/\b(bd|bid|twice)\b/,['09:00','2
 function tms(t){t=t.toLowerCase();const m=t.match(/\b([01])\s*-\s*([01])\s*-\s*([01])\b/);if(m){const r=['08:00','14:00','21:00'].filter((_,i)=>m[i+1]=='1');return r.length?r:['09:00']}for(const[p,v]of TF)if(p.test(t))return v;return['09:00']}
 function parseRx(text){return text.split('\n').map(l=>{const m=l.match(/([A-Za-z][A-Za-z\- ]{2,30}?)\s*(\d+\.?\d*\s?(?:mg|mcg|g|ml))/i);if(!m)return null;const d=l.match(/(\d+)\s*(day|days|week|weeks)\b/i);return{line:l,drug:m[1].trim().replace(/^(tab|tablet|cap|capsule|syp)\.?\s+/i,'').replace(/\w\S*/g,w=>w[0].toUpperCase()+w.slice(1).toLowerCase()),dose:m[2].toLowerCase().replace(/ /g,''),times:tms(l),days:d?+d[1]*(/^w/i.test(d[2])?7:1):5}}).filter(Boolean)}
 const RX="Tab Amoxicillin 500mg 1-0-1 x 7 days\nCap Omeprazole 20mg OD x 14 days\nTab Aspirin 75mg OD x 7 days";
+
+// ===== Real prescription OCR (Tesseract.js, loaded on demand) =====
+let tessP=null;
+function loadTess(){if(window.Tesseract)return Promise.resolve();if(tessP)return tessP;tessP=new Promise((ok,no)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';s.onload=ok;s.onerror=()=>{tessP=null;no(new Error('load'))};document.head.append(s)});return tessP}
+function prepOCR(im){const k=Math.min(2,1800/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=Math.round(im.width*k);c.height=Math.round(im.height*k);const x=c.getContext('2d');x.drawImage(im,0,0,c.width,c.height);const d=x.getImageData(0,0,c.width,c.height),p=d.data;let lo=255,hi=0;for(let i=0;i<p.length;i+=4){const g=.299*p[i]+.587*p[i+1]+.114*p[i+2];p[i]=g;if(g<lo)lo=g;if(g>hi)hi=g}const r=Math.max(1,hi-lo);for(let i=0;i<p.length;i+=4){const v=Math.max(0,Math.min(255,(p[i]-lo)*255/r));p[i]=p[i+1]=p[i+2]=v;p[i+3]=255}x.putImageData(d,0,0);return c}
+function cleanOcr(t){return t.replace(/\r/g,'').replace(/(\d)\s*m[gq9]\b/gi,'$1mg').replace(/(\d)\s*mcg\b/gi,'$1mcg').replace(/[|]/g,'1').replace(/[ \t]+/g,' ').split('\n').map(l=>l.trim()).filter(l=>l.length>2).join('\n')}
+// fallback: spot known medicine names even when a dose is not readable
+function parseByDb(text){const out=[];text.split('\n').forEach(l=>{const low=l.toLowerCase();for(const m of MED){if(m.al.some(a=>new RegExp('\\b'+a.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b').test(low))){const d=l.match(/(\d+\.?\d*\s?(?:mg|mcg|g|ml))/i),dy=l.match(/(\d+)\s*(day|days|week|weeks)\b/i);out.push({line:l,drug:m.n,dose:d?d[1].toLowerCase().replace(/ /g,''):'',times:tms(l),days:dy?+dy[1]*(/^w/i.test(dy[2])?7:1):5});break}}});return out}
+function parseAll(text){const a=parseRx(text),seen=new Set(a.map(i=>i.drug.toLowerCase()));parseByDb(text).forEach(i=>{if(!seen.has(i.drug.toLowerCase())&&![...seen].some(n=>n.includes(i.drug.toLowerCase())||i.drug.toLowerCase().includes(n))){seen.add(i.drug.toLowerCase());a.push(i)}});return a}
+async function runOCR(){const bar=()=>{const b=document.querySelector('[data-a=scan]');if(b)b.textContent=scanMsg};let w=null;try{scanMsg='Loading reader…';bar();await Promise.race([loadTess(),new Promise((_,no)=>setTimeout(()=>no(new Error('timeout')),30000))]);w=await Tesseract.createWorker('eng',1,{logger:m=>{if(m.status=='recognizing text')scanMsg='Reading text '+Math.round(m.progress*100)+'%';else if(m.status&&/load|init/.test(m.status))scanMsg='Preparing reader…';bar()}});const r=await Promise.race([w.recognize(rxCanvas),new Promise((_,no)=>setTimeout(()=>no(new Error('timeout')),120000))]);const txt=cleanOcr(r.data.text||'');rxText=txt;scanned=parseAll(txt);if(!txt)toast('No text found. Retake the photo in good light, flat and close.');else if(!scanned.length)toast('Text read, but no medicine found. Fix the text below and press Read text.');else toast(scanned.length+' medicine'+(scanned.length>1?'s':'')+' found. Please check them.')}catch(e){toast(e.message=='timeout'?'Reading took too long. Try a clearer, smaller photo.':'Could not load the reader. Check your internet, or type the medicines below.')}finally{scanning=false;if(w)try{w.terminate()}catch(_){}route()}}
 const DOCS=[['Dr. Ayesha Khan','General Physician',1500,12],['Dr. Imran Ali','Cardiologist',3000,18],['Dr. Sara Ahmed','Pediatrician',2000,10],['Dr. Bilal Raza','Dermatologist',2500,9],['Dr. Hina Malik','Gynecologist',2500,14],['Dr. Usman Tariq','Orthopedic Surgeon',2800,16],['Dr. Zainab Farooq','ENT Specialist',2200,11]];
 const CAT=[['Paracetamol 500mg',40,'Pain relief',0],['Ibuprofen 400mg',90,'Pain relief',0],['Diclofenac 50mg',120,'Pain relief',0],['Amoxicillin 500mg',250,'Antibiotics',1],['Azithromycin 500mg',380,'Antibiotics',1],['Cetirizine 10mg',60,'Allergy',0],['Loratadine 10mg',70,'Allergy',0],['Omeprazole 20mg',180,'Digestive',0],['ORS Sachet',30,'Hydration',0],['Vitamin C 500mg',150,'Vitamins',0],['Vitamin D3 1000IU',320,'Vitamins',0],['Salbutamol 4mg',210,'Respiratory',1]];
 // ===== data structures (logic layer) =====
@@ -271,7 +278,7 @@ IC.pin='<path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11Z"/><circle cx=
 const ico=k=>`<svg viewBox="0 0 24 24">${IC[k]}</svg>`;
 const PG=[['home','Home'],['body','Check'],['scan','Scan'],['meds','Meds'],['doctors','Doctors'],['shop','Pharmacy'],['chat','Assistant']];
 $('#dock').innerHTML='<div class="logo">M</div>'+PG.map(p=>`<a href="#${p[0]}" data-p="${p[0]}" aria-label="${p[1]}">${ico(p[0])}<em>${p[1]}</em></a>`).join('')+'<div class="sp"></div><a class="sosb" data-a="sos" aria-label="SOS">'+ico('sos')+'<em>SOS</em></a>';
-let sel=new Set(),reg='head',addf={name:'',dose:'',qty:'14',t:['08:00']},dfil='All',pq='',pcat='All',scanned=null,rxImg=null,rxText='',scanning=false,cart={},hist=[];
+let sel=new Set(),reg='head',addf={name:'',dose:'',qty:'14',t:['08:00']},dfil='All',pq='',pcat='All',scanned=null,rxImg=null,rxCanvas=null,rxText='',scanning=false,scanMsg='',cart={},hist=[];
 const hd=(t,s)=>`<div class="top"><div><h1>${t}</h1><p class="sub">${s}</p></div><div style="display:flex;gap:8px"><button class="gh" data-a="logout">Log out</button><button class="sos" data-a="sos">${ico('sos')}SOS</button></div></div>`;
 const V={
 home(){const D=doses(),done=D.filter(d=>S.taken[d.k]).length,nx=D.find(d=>!S.taken[d.k]),h=new Date().getHours(),W=warns(),low=S.meds.find(m=>m.left<=6),ap=S.appts.filter(a=>a.day>=dayS()).sort((a,b)=>(a.day+a.slot)<(b.day+b.slot)?-1:1)[0],C=2*Math.PI*46;
@@ -291,7 +298,7 @@ body(){const rs=sel.size?predict([...sel]):null,urgent=sel.has('chest pain')||se
  return hd('Symptom check','Tap a body area, then pick what you feel.')+`<div class="body"><div class="t" style="display:grid;place-items:center"><svg viewBox="0 0 200 400" width="220"><circle ${R('head','cx="100" cy="42" r="30"')}/><rect ${R('chest','x="62" y="80" width="76" height="68" rx="20"')}/><rect ${R('stomach','x="68" y="154" width="64" height="58" rx="18"')}/><rect ${R('limbs','x="28" y="86" width="26" height="130" rx="13"')}/><rect ${R('limbs','x="146" y="86" width="26" height="130" rx="13"')}/><rect ${R('limbs','x="70" y="218" width="26" height="150" rx="13"')}/><rect ${R('limbs','x="104" y="218" width="26" height="150" rx="13"')}/></svg></div>
  <div class="t"><h2>${reg[0].toUpperCase()+reg.slice(1)}</h2><div class="chips">${REG[reg].concat(reg=='head'?[]:[]).map(s=>`<span class="chip ${sel.has(s)?'on':''}" data-a="sym" data-v="${s}">${s}</span>`).join('')}</div><h2 style="margin-top:18px">General</h2><div class="chips">${REG.general.map(s=>`<span class="chip ${sel.has(s)?'on':''}" data-a="sym" data-v="${s}">${s}</span>`).join('')}</div>
  ${rs?`<h2 style="margin-top:22px">Likely conditions</h2>${rs.map(r=>`<div class="row"><b>${r.n}</b><span class="mut">${r.p}%</span></div><div class="bar"><i style="width:${r.p}%"></i></div>`).join('')}<div class="alert" style="margin-top:16px">${ADV[rs[0].n]||'Rest, hydrate, and see a doctor if symptoms persist.'}</div>${urgent?'<div class="alert r">These symptoms can be serious. Seek urgent care.</div>':''}`:'<p class="mut" style="margin-top:18px">Pick at least one symptom to see results.</p>'}</div></div>`},
-scan(){const items=scanned;return hd('Prescription scanner','Upload a photo of your prescription or medicine strip. Medicines are found and turned into reminders.')+`<div class="bento"><div class="t s2">${rxImg?`<img class="prev" src="${rxImg}" alt="Uploaded prescription"><div class="row" style="flex-wrap:wrap"><label class="chip">Change photo<input type="file" accept="image/*" id="rxf" hidden></label><button data-a="scan">${scanning?'Scanning…':'Scan photo'}</button></div>`:`<label class="drop"><svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg><h2 style="margin-top:10px">Upload or take a photo</h2><p class="mut">Prescription, medicine box or strip</p><input type="file" accept="image/*" id="rxf" hidden></label>`}<p class="mut" style="font-size:12.5px;margin-top:12px">Photos stay on your device. Reading text from an image is not built into this demo, so check the medicines on the right and fix them if needed.</p></div>
+scan(){const items=scanned;return hd('Prescription scanner','Upload a photo of your prescription or medicine strip. Medicines are found and turned into reminders.')+`<div class="bento"><div class="t s2">${rxImg?`<img class="prev" src="${rxImg}" alt="Uploaded prescription"><div class="row" style="flex-wrap:wrap"><label class="chip">Change photo<input type="file" accept="image/*" id="rxf" hidden></label><button data-a="scan"${scanning?' disabled':''}>${scanning?(scanMsg||'Scanning…'):'Scan photo'}</button></div>`:`<label class="drop"><svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg><h2 style="margin-top:10px">Upload or take a photo</h2><p class="mut">Prescription, medicine box or strip</p><input type="file" accept="image/*" id="rxf" hidden></label>`}<p class="mut" style="font-size:12.5px;margin-top:12px">Text is read from your photo and the image is not uploaded anywhere. The first scan needs internet to load the reader. Handwriting may be misread, so always check the medicines on the right.</p></div>
  <div class="t s2"><h2>Detected medicines</h2>${items?items.map((i,n)=>`<div class="row" style="padding:10px 0;border-bottom:1px solid var(--line)"><span><b>${esc(i.drug)} ${esc(i.dose)}</b><br><span class="mut">${i.times.join(' · ')} for ${i.days} days</span></span><button class="sm dg" data-a="rmscan" data-v="${n}">Remove</button></div>`).join('')+`<br><button data-a="addrx">Add ${items.length} reminders</button>`:'<p class="mut">Upload a photo and press Scan, or type the medicines below.</p>'}
  <h2 style="margin-top:20px">Or type the medicines</h2><textarea id="rxt" placeholder="Tab Amoxicillin 500mg 1-0-1 x 7 days">${esc(rxText)}</textarea><button class="gh" data-a="parse" style="margin-top:10px">Read text</button></div></div>`},
 meds(){const W=warns(),D=doses(),done=D.filter(d=>S.taken[d.k]).length,low=S.meds.filter(m=>m.left<=6).length,sg=addf.name.trim()?drugTrie.find(addf.name,6).filter(x=>x.name.toLowerCase()!==addf.name.trim().toLowerCase()):[],TM=[['Morning','08:00'],['Afternoon','14:00'],['Evening','21:00'],['Night','22:00']];
@@ -475,8 +482,8 @@ document.addEventListener('click',e=>{const t=e.target.closest('[data-a]');if(!t
  else if(a=='ask'){const q=$('#ask').value.trim();if(q){S.pre=q;location.hash='chat';route()}}
  else if(a=='reg'){reg=v;route()}
  else if(a=='sym'){sel.has(v)?sel.delete(v):sel.add(v);route()}
- else if(a=='scan'){if(scanning)return;const ta=$('#rxt');rxText=ta?ta.value:rxText;scanning=true;route();setTimeout(()=>{scanning=false;scanned=parseRx(rxText||RX);if(!rxText)toast('Demo: showing a sample result. Type your medicines to use real ones.');route()},1400)}
- else if(a=='parse'){rxText=$('#rxt').value;scanned=parseRx(rxText);if(!scanned.length)toast('None found. Format: Tab Name 500mg OD x 5 days');route()}
+ else if(a=='scan'){if(scanning)return;if(!rxCanvas){toast('Upload a photo first');return}const ta=$('#rxt');if(ta)rxText=ta.value;scanning=true;route();runOCR()}
+ else if(a=='parse'){rxText=$('#rxt').value;scanned=parseAll(rxText);if(!scanned.length)toast('None found. Format: Tab Name 500mg OD x 5 days');route()}
  else if(a=='rmscan'){scanned.splice(+v,1);route()}
  else if(a=='sossave'){S.ec={name:$('#ecn').value.trim(),phone:$('#ecp').value.trim()};save();toast('Contact saved');openSOS()}
  else if(a=='sosshare'){shareLoc()}
@@ -486,14 +493,14 @@ document.addEventListener('click',e=>{const t=e.target.closest('[data-a]');if(!t
  else if(a=='df'){dfil=v;route()}
  else if(a=='pc'){pcat=v;route()}
  else if(a=='addmed'){const nm=addf.name.trim(),ds=addf.dose.trim().toLowerCase().replace(/\s/g,''),q=parseInt(addf.qty,10);if(!nm){toast('Enter a medicine name');return}if(!/^\d+(\.\d+)?(mg|mcg|g|ml)$/.test(ds)){toast('Enter a dose like 500mg');return}if(!(q>0)){toast('Enter the number of tablets');return}if(!addf.t.length){toast('Pick at least one time');return}S.meds.push({id:S.id++,drug:nm.replace(/\w\S*/g,w=>w[0].toUpperCase()+w.slice(1).toLowerCase()),dose:ds,times:[...addf.t],left:q,c:COL[S.id%5]});addf={name:'',dose:'',qty:'14',t:['08:00']};save();toast('Medicine added');route()}
- else if(a=='addrx'){scanned.forEach(i=>S.meds.push({id:S.id++,drug:i.drug,dose:i.dose,times:i.times,left:i.days*i.times.length,c:COL[S.id%5]}));scanned=null;rxImg=null;rxText='';save();toast('Reminders added');location.hash='meds'}
+ else if(a=='addrx'){scanned.forEach(i=>S.meds.push({id:S.id++,drug:i.drug,dose:i.dose,times:i.times,left:i.days*i.times.length,c:COL[S.id%5]}));scanned=null;rxImg=null;rxCanvas=null;rxText='';save();toast('Reminders added');location.hash='meds'}
  else if(a=='rm'){S.meds=S.meds.filter(m=>m.id!=v);save();route()}
  else if(a=='book'){const[d,sl]=v.split('|'),day=dayS(1),mine=new Map(S.appts.map(x=>[x.day+'|'+x.slot,x]));if(mine.has(day+'|'+sl)){toast('You already have an appointment at '+sl);return}S.appts.push({id:S.id++,doctor:d,day,slot:sl});save();toast('Appointment booked');route()}
  else if(a=='cancel'){S.appts=S.appts.filter(x=>x.id!=v);save();route()}
  else if(a=='q'){const[n,d]=v.split('|');cart[n]=Math.max(0,(cart[n]||0)+ +d);route()}
  else if(a=='order'){const it=CAT.filter(c=>cart[c[0]]).map(c=>`${c[0]} ×${cart[c[0]]}`);if(!it.length)return;const sub=CAT.reduce((n,c)=>n+c[1]*(cart[c[0]]||0),0);S.orders.push({id:S.id++,items:it.join(', '),at:Date.now(),total:sub+(sub<500?80:0)});CAT.forEach(c=>{const m=S.meds.find(m=>c[0].toLowerCase().startsWith(m.drug.toLowerCase()));if(m)m.left+=(cart[c[0]]||0)*10});cart={};save();toast('Order placed');route()}
  else if(a=='send'){const q=$('#ci').value.trim();if(q)ask(q)}});
-document.addEventListener('change',e=>{const s=e.target;if(s.id=='rxf'&&s.files[0]){const r=new FileReader();r.onload=()=>{const im=new Image();im.onload=()=>{const k=Math.min(1,900/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=im.width*k;c.height=im.height*k;c.getContext('2d').drawImage(im,0,0,c.width,c.height);rxImg=c.toDataURL('image/jpeg',.85);scanned=null;route()};im.src=r.result};r.readAsDataURL(s.files[0]);return}if(s.dataset.doc&&s.files[0]){setPic(s.dataset.doc,s.files[0]);return}if(s.id=='sl'){if(+s.value>=97){S.taken[s.dataset.k]=1;const m=S.meds.find(m=>m.id==s.dataset.m);if(m&&m.left>0)m.left--;save();toast('Dose confirmed');route()}else s.value=0}});
+document.addEventListener('change',e=>{const s=e.target;if(s.id=='rxf'&&s.files[0]){const r=new FileReader();r.onload=()=>{const im=new Image();im.onload=()=>{const k=Math.min(1,900/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=im.width*k;c.height=im.height*k;c.getContext('2d').drawImage(im,0,0,c.width,c.height);rxImg=c.toDataURL('image/jpeg',.85);rxCanvas=prepOCR(im);rxText='';scanned=null;route()};im.src=r.result};r.readAsDataURL(s.files[0]);return}if(s.dataset.doc&&s.files[0]){setPic(s.dataset.doc,s.files[0]);return}if(s.id=='sl'){if(+s.value>=97){S.taken[s.dataset.k]=1;const m=S.meds.find(m=>m.id==s.dataset.m);if(m&&m.left>0)m.left--;save();toast('Dose confirmed');route()}else s.value=0}});
 document.addEventListener('input',e=>{const t=e.target,id=t.id;
  if(id=='md'){addf.dose=t.value;return}if(id=='mq'){addf.qty=t.value;return}
  if(id=='mn'||id=='ps'){if(id=='mn')addf.name=t.value;else pq=t.value;const pos=t.selectionStart;route();const el=$('#'+id);if(el){el.focus();try{el.setSelectionRange(pos,pos)}catch(_){}}}});
@@ -502,14 +509,5 @@ setInterval(()=>{const o=S.orders.at(-1),el=$('#steps');if(o&&el&&location.hash=
 addEventListener('hashchange',route);$('#v').classList.add('first');setTimeout(()=>$('#v').classList.remove('first'),1300);route();
 </script>
 <script>if('serviceWorker' in navigator&&location.protocol!=='file:'){addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}))}</script>
-<script>
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("service-worker.js");
-  });
-}
-</script>
 </body>
 </html>
-
-
